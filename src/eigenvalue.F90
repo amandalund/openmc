@@ -108,10 +108,8 @@ contains
     if (master) call header("SIMULATION FINISHED", level=1)
 
     ! Write energy grid values and number of XS lookups to files
-    open(unit=13, file="xs_lookups.out", action="write", status="replace")
-    open(unit=14, file="nuclide_grid.out", action="write", status="replace")
-    write(13,*) n_nuclides_total
-    write(14,*) n_nuclides_total
+    open(unit=13, file="xs_lookups.out", action="write", status="replace", recl=2000000000)
+    open(unit=14, file="nuclide_grid.out", action="write", status="replace", recl=2000000000)
     do i = 1, n_nuclides_total
       nuc => nuclides(i)
       write(13,*) nuc % zaid, size(nuc % lookups), nuc % lookups
