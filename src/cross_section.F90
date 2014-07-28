@@ -157,6 +157,9 @@ contains
 
       i_grid = nuc % grid_index(union_grid_index)
 
+      ! Increment number of xs lookups for this nuclide
+      nuc % lookups(i_grid) = nuc % lookups(i_grid) + 1
+
     case (GRID_NUCLIDE)
       ! If we're not using the unionized grid, we have to do a binary search on
       ! the nuclide energy grid in order to determine which points to

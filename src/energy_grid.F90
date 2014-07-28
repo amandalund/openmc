@@ -27,6 +27,10 @@ contains
     ! Add grid points for each nuclide in the problem
     do i = 1, n_nuclides_total
       nuc => nuclides(i)
+
+      ! Grid to count number of XS lookups for each nuclide
+      allocate(nuc % lookups(nuc % n_grid))
+      nuc % lookups = 0
       call add_grid_points(list, nuc % energy)
     end do
 

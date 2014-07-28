@@ -41,6 +41,10 @@ contains
     type(Particle) :: p
     integer(8)     :: i_work
 
+    ! for writing energy grid and XS lookups values to file
+    type(Nuclide), pointer :: nuc => null()
+    integer :: i
+
     if (master) call header("K EIGENVALUE SIMULATION", level=1)
 
     ! Display column titles
@@ -102,6 +106,25 @@ contains
     ! END OF RUN WRAPUP
 
     if (master) call header("SIMULATION FINISHED", level=1)
+
+    ! Write energy grid values and number of XS lookups to files
+    open(unit=13, file="xs_lookups.out", action="write", status="replace")
+    open(unit=14, file="nuclide_grid.out", action="write", status="replace")
+    write(13,*) n_nuclides_total
+    write(14,*) n_nuclides_total
+    do i = 1, n_nuclides_total
+      nuc => nuclides(i)
+      write(13,*) nuc % zaid, size(nuc % lookups), nuc % lookups
+      write(14,*) nuc % zaid, size(nuc % energy), nuc % energy
+    end do
+    close(unit=13)
+    close(unit=14)
+    open(unit=15, file="union_grid.out", action="write", status="replace") 
+    write(15,*) n_grid
+    do i = 1, n_grid
+      write(15,*) e_grid(i)
+    end do
+    close(unit=15)
     
     ! Clear particle
     call p % clear()
