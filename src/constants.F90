@@ -255,6 +255,15 @@ module constants
        JENDL_33   = 7, &
        JENDL_40   = 8
 
+  ! Universal energy grid microscopic cross sections
+  integer, parameter :: &
+       XS_TOTAL      = 1, & ! total cross section
+       XS_ELASTIC    = 2, & ! elastic scattering
+       XS_FISSION    = 3, & ! fission
+       XS_NU_FISSION = 4, & ! neutron production
+       XS_ABSORPTION = 5, & ! absorption (MT > 100)
+       XS_HEATING    = 6    ! heating
+
   ! ============================================================================
   ! TALLY-RELATED CONSTANTS
 
@@ -382,9 +391,10 @@ module constants
 
   ! Energy grid methods
   integer, parameter :: &
-       GRID_NUCLIDE  = 1, & ! non-unionized energy grid
-       GRID_UNION    = 2, & ! union grid with pointers
-       GRID_LETHARGY = 3    ! lethargy mapping
+       GRID_NUCLIDE   = 1, & ! non-unionized energy grid
+       GRID_UNION     = 2, & ! union grid with pointers
+       GRID_LETHARGY  = 3, & ! lethargy mapping
+       GRID_UNIVERSAL = 4    ! universal energy grid
 
   ! Running modes
   integer, parameter ::        &

@@ -4,7 +4,7 @@ module initialize
   use bank_header,      only: Bank
   use constants
   use dict_header,      only: DictIntInt, ElemKeyValueII
-  use energy_grid,      only: unionized_grid
+  use energy_grid,      only: unionized_grid, universal_grid
   use error,            only: fatal_error, warning
   use geometry,         only: neighbor_lists
   use geometry_header,  only: Cell, Universe, Lattice, BASE_UNIVERSE
@@ -108,6 +108,13 @@ contains
       if (grid_method == GRID_UNION) then
         call time_unionize % start()
         call unionized_grid()
+        call time_unionize % stop()
+      end if
+
+      ! Construct universal energy grid
+      if (grid_method == GRID_UNIVERSAL) then
+        call time_unionize % start()
+        call universal_grid()
         call time_unionize % stop()
       end if
 

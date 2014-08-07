@@ -81,6 +81,7 @@ module global
   integer :: grid_method ! how to treat the energy grid
   integer :: n_grid      ! number of points on unionized grid
   real(8), allocatable :: e_grid(:) ! energies on unionized grid
+  real(8), allocatable :: xs_grid(:, :, :) ! universal energy grid cross section values
 
   ! Unreoslved resonance probablity tables
   logical :: urr_ptables_on = .true.

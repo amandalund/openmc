@@ -141,6 +141,7 @@ module ace_header
     ! Type-Bound procedures
     contains
       procedure :: clear => nuclide_clear ! Deallocates Nuclide
+      procedure :: xs_clear => nuclide_grid_clear ! Deallocates nuclide xs data
   end type Nuclide
 
 !===============================================================================
@@ -381,5 +382,21 @@ module ace_header
       end if
 
     end subroutine nuclide_clear
+
+!===============================================================================
+! NUCLIDE_GRID_CLEAR resets and deallocates data in Nuclide energy grid.
+!===============================================================================
+
+    subroutine nuclide_grid_clear(this)
+
+      class(Nuclide), intent(inout) :: this ! The Nuclide object to clear
+
+      if (allocated(this % energy)) &
+           deallocate(this % total, this % elastic, this % fission,  &
+          this % nu_fission, this % absorption, this % energy)
+      if (allocated(this % heating)) &
+           deallocate(this % heating)
+
+    end subroutine nuclide_grid_clear
 
 end module ace_header

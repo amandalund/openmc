@@ -52,6 +52,9 @@ contains
     ! Find energy index on unionized grid
     if (grid_method == GRID_UNION) call find_energy_index(p % E)
 
+    ! Find energy index on universal grid
+    if (grid_method == GRID_UNIVERSAL) call find_energy_index(p % E)
+
     ! Determine if this material has S(a,b) tables
     check_sab = (mat % n_sab > 0)
 
@@ -146,6 +149,18 @@ contains
     type(Nuclide), pointer, save :: nuc => null()
 !$omp threadprivate(nuc)
 
+    if (grid_method == GRID_UNIVERSAL) then
+
+      ! For the universal energy grid the interpolation factor will be the same
+      ! for all nuclides
+      f = (E - e_grid(union_grid_index)) / &
+         (e_grid(union_grid_index + 1) - e_grid(union_grid_index)) 
+
+      ! The index into the nuclides array is the same for all nuclides and is
+      ! just the index in the energy grid
+      i_grid = union_grid_index
+    end if
+
     ! Set pointer to nuclide
     nuc => nuclides(i_nuclide)
 
@@ -172,13 +187,27 @@ contains
 
     end select
 
-    ! check for rare case where two energy points are the same
-    if (nuc % energy(i_grid) == nuc % energy(i_grid+1)) i_grid = i_grid + 1
+    if (grid_method == GRID_UNIVERSAL) then
 
-    ! calculate interpolation factor
-    f = (E - nuc%energy(i_grid))/(nuc%energy(i_grid+1) - nuc%energy(i_grid))
+      ! check for rare case where two energy points are the same
+      if (e_grid(i_grid) == e_grid(i_grid+1)) i_grid = i_grid + 1
+    else 
 
-    micro_xs(i_nuclide) % index_grid    = i_grid
+      ! check for rare case where two energy points are the same
+      if (nuc % energy(i_grid) == nuc % energy(i_grid+1)) i_grid = i_grid + 1
+
+      ! calculate interpolation factor 
+      f = (E - nuc % energy(i_grid)) / &
+         (nuc % energy(i_grid + 1) - nuc % energy(i_grid))
+    end if
+
+    !!!!! This assumes i_grid is the index on the nuclide energy grid.
+    ! Will not work for universal grid.
+    if (grid_method == GRID_UNIVERSAL) then
+      micro_xs(i_nuclide) % index_grid = nuc % grid_index(union_grid_index)
+    else
+      micro_xs(i_nuclide) % index_grid = i_grid
+    end if
     micro_xs(i_nuclide) % interp_factor = f
 
     ! Initialize sab treatment to false
@@ -191,35 +220,73 @@ contains
     micro_xs(i_nuclide) % nu_fission = ZERO
     micro_xs(i_nuclide) % kappa_fission  = ZERO
 
-    ! Calculate microscopic nuclide total cross section
-    micro_xs(i_nuclide) % total = (ONE - f) * nuc % total(i_grid) &
-         + f * nuc % total(i_grid+1)
+    if (grid_method == GRID_UNIVERSAL) then
 
-    ! Calculate microscopic nuclide total cross section
-    micro_xs(i_nuclide) % elastic = (ONE - f) * nuc % elastic(i_grid) &
-         + f * nuc % elastic(i_grid+1)
-
-    ! Calculate microscopic nuclide absorption cross section
-    micro_xs(i_nuclide) % absorption = (ONE - f) * nuc % absorption( &
-         i_grid) + f * nuc % absorption(i_grid+1)
-
-    if (nuc % fissionable) then
       ! Calculate microscopic nuclide total cross section
-      micro_xs(i_nuclide) % fission = (ONE - f) * nuc % fission(i_grid) &
-           + f * nuc % fission(i_grid+1)
+      micro_xs(i_nuclide) % total = &
+           (ONE - f) * xs_grid(XS_TOTAL, i_nuclide, i_grid) &
+           + f * xs_grid(XS_TOTAL, i_nuclide, i_grid+1)
 
-      ! Calculate microscopic nuclide nu-fission cross section
-      micro_xs(i_nuclide) % nu_fission = (ONE - f) * nuc % nu_fission( &
-           i_grid) + f * nuc % nu_fission(i_grid+1)
+      ! Calculate microscopic nuclide elastic cross section
+      micro_xs(i_nuclide) % elastic = &
+           (ONE - f) * xs_grid(XS_ELASTIC, i_nuclide, i_grid) &
+           + f * xs_grid(XS_ELASTIC, i_nuclide, i_grid+1)
+
+      ! Calculate microscopic nuclide absorption cross section
+      micro_xs(i_nuclide) % absorption = &
+           (ONE - f) * xs_grid(XS_ABSORPTION, i_nuclide, i_grid) &
+           + f * xs_grid(XS_ABSORPTION, i_nuclide, i_grid+1)
+
+      if (nuc % fissionable) then
+        ! Calculate microscopic nuclide total cross section
+        micro_xs(i_nuclide) % fission = &
+             (ONE - f) * xs_grid(XS_FISSION, i_nuclide, i_grid) &
+             + f * xs_grid(XS_FISSION, i_nuclide, i_grid+1)
+
+        ! Calculate microscopic nuclide nu-fission cross section
+        micro_xs(i_nuclide) % nu_fission = &
+             (ONE - f) * xs_grid(XS_NU_FISSION, i_nuclide, i_grid) &
+             + f * xs_grid(XS_NU_FISSION, i_nuclide, i_grid+1)
+
+        ! Calculate microscopic nuclide kappa-fission cross section
+        ! The ENDF standard (ENDF-102) states that MT 18 stores
+        ! the fission energy as the Q_value (fission(1))
+        micro_xs(i_nuclide) % kappa_fission = &
+             nuc % reactions(nuc % index_fission(1)) % Q_value * &
+             micro_xs(i_nuclide) % fission
+      end if
+
+    else
+
+      ! Calculate microscopic nuclide total cross section
+      micro_xs(i_nuclide) % total = (ONE - f) * nuc % total(i_grid) &
+           + f * nuc % total(i_grid+1)
+
+      ! Calculate microscopic nuclide total cross section
+      micro_xs(i_nuclide) % elastic = (ONE - f) * nuc % elastic(i_grid) &
+           + f * nuc % elastic(i_grid+1)
+
+      ! Calculate microscopic nuclide absorption cross section
+      micro_xs(i_nuclide) % absorption = (ONE - f) * nuc % absorption( &
+           i_grid) + f * nuc % absorption(i_grid+1)
+
+      if (nuc % fissionable) then
+        ! Calculate microscopic nuclide total cross section
+        micro_xs(i_nuclide) % fission = (ONE - f) * nuc % fission(i_grid) &
+             + f * nuc % fission(i_grid+1)
+
+        ! Calculate microscopic nuclide nu-fission cross section
+        micro_xs(i_nuclide) % nu_fission = (ONE - f) * nuc % nu_fission( &
+             i_grid) + f * nuc % nu_fission(i_grid+1)
            
-      ! Calculate microscopic nuclide kappa-fission cross section
-      ! The ENDF standard (ENDF-102) states that MT 18 stores
-      ! the fission energy as the Q_value (fission(1))
-      micro_xs(i_nuclide) % kappa_fission = &
-           nuc % reactions(nuc % index_fission(1)) % Q_value * &
-           micro_xs(i_nuclide) % fission
+        ! Calculate microscopic nuclide kappa-fission cross section
+        ! The ENDF standard (ENDF-102) states that MT 18 stores
+        ! the fission energy as the Q_value (fission(1))
+        micro_xs(i_nuclide) % kappa_fission = &
+             nuc % reactions(nuc % index_fission(1)) % Q_value * &
+             micro_xs(i_nuclide) % fission
+      end if
     end if
-
     ! If there is S(a,b) data for this nuclide, we need to do a few
     ! things. Since the total cross section was based on non-S(a,b) data, we
     ! need to correct it by subtracting the non-S(a,b) elastic cross section and
