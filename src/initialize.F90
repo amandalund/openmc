@@ -4,7 +4,7 @@ module initialize
   use bank_header,      only: Bank
   use constants
   use dict_header,      only: DictIntInt, ElemKeyValueII
-  use energy_grid,      only: unionized_grid
+  use energy_grid,      only: unionized_grid, cascading_grid
   use error,            only: fatal_error, warning
   use geometry,         only: neighbor_lists
   use geometry_header,  only: Cell, Universe, Lattice, BASE_UNIVERSE
@@ -108,6 +108,13 @@ contains
       if (grid_method == GRID_UNION) then
         call time_unionize % start()
         call unionized_grid()
+        call time_unionize % stop()
+      end if
+
+      ! Contruct fractional cascading energy grid
+      if (grid_method == GRID_CASCADE) then
+        call time_unionize % start()
+        call cascading_grid()
         call time_unionize % stop()
       end if
 
@@ -416,7 +423,7 @@ contains
 
 #ifdef _OPENMP          
           ! Read and set number of OpenMP threads
-          n_threads = int(str_to_int(argv(i)), 4)
+          n_threads = str_to_int(argv(i))
           if (n_threads < 1) then
             message = "Invalid number of threads specified on command line."
             call fatal_error()
@@ -427,7 +434,7 @@ contains
           call warning()
 #endif
 
-        case ('-?', '-h', '-help', '--help')
+        case ('-?', '-help', '--help')
           call print_usage()
           stop
         case ('-v', '-version', '--version')

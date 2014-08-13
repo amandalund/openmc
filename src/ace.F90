@@ -41,6 +41,8 @@ contains
     integer :: m            ! position for sorting
     integer :: temp_nuclide ! temporary value for sorting
     integer :: temp_table   ! temporary value for sorting
+    real(8) :: temp_density ! temporary value for sorting
+    integer :: temp_sab     ! temporary value for sorting
     character(12)  :: name  ! name of isotope, e.g. 92235.03c
     character(12)  :: alias ! alias of nuclide, e.g. U-235.03c
     type(Material),   pointer :: mat => null()
@@ -130,6 +132,41 @@ contains
           call fatal_error()
         end if
       end do ASSIGN_SAB
+
+      ! We need to make sure the entries in nuclides are sorted or else they
+      ! won't be applied correctly in the cross_section module. The algorithm
+      ! here is a simple insertion sort -- don't need anything fancy!
+
+      SORT_NUC: do k = 2, mat % n_nuclides
+        m = k
+        temp_nuclide = mat % nuclide(k)
+        temp_density = mat % atom_density(k)
+        if (mat % n_sab > 0) then
+          temp_sab = 0
+          if (any(mat % i_sab_nuclides == k)) temp_sab = k
+        end if
+
+        do
+          if (temp_nuclide >= mat % nuclide(m-1)) exit
+          mat % nuclide(m) = mat % nuclide(m-1)
+          mat % atom_density(m) = mat % atom_density(m-1)
+          if (mat % n_sab > 0) then
+            if (any(mat % i_sab_nuclides == m-1)) then
+              where (mat % i_sab_nuclides == m-1) mat % i_sab_nuclides = m
+            end if
+          end if
+          m = m - 1
+          if (m == 1) exit
+        end do
+
+        mat % nuclide(m) = temp_nuclide
+        mat % atom_density(m) = temp_density
+        if (mat % n_sab > 0) then
+          if (temp_sab == k) then
+            where (mat % i_sab_nuclides == k) mat % i_sab_nuclides = m
+          end if
+        end if
+      end do SORT_NUC
 
       ! If there are multiple S(a,b) tables, we need to make sure that the
       ! entries in i_sab_nuclides are sorted or else they won't be applied
@@ -789,19 +826,14 @@ contains
       ! read angular distribution -- currently this does not actually parse the
       ! angular distribution tables for each incoming energy, that must be done
       ! on-the-fly
-      XSS_index = JXS9 + LOCB + 2 * NE
+      LC = rxn % adist % location(1)
+      XSS_index = JXS9 + abs(LC) - 1
       rxn % adist % data = get_real(length)
 
       ! change location pointers since they are currently relative to JXS(9)
-      LC = LOCB + 2 * NE + 1
-      do j = 1, NE
-        ! For consistency, leave location as 0 if type is isotropic.
-        ! This is not necessary for current correctness, but can avoid
-        ! future issues
-        if (rxn % adist % location(j) /= 0) then
-          rxn % adist % location(j) = abs(rxn % adist % location(j)) - LC
-        end if
-      end do
+      LC = abs(rxn % adist % location(1))
+      rxn % adist % location = abs(rxn % adist % location) - LC
+
     end do
 
   end subroutine read_angular_dist
@@ -972,23 +1004,24 @@ contains
       ! Continuous tabular distribution
       NR = int(XSS(lc + 1))
       NE = int(XSS(lc + 2 + 2*NR))
+      ! Before progressing, check to see if data set uses L(I) values
+      ! in a way inconsistent with the current form of the ACE Format Guide
+      ! (MCNP5 Manual, Vol 3)
       allocate(L(NE))
       L = int(XSS(lc + 3 + 2*NR + NE: lc + 3 + 2*NR + 2*NE - 1))
-
+      do i = 1,NE
+        ! Now check to see if L(i) is equal to any other entries
+        ! If so, then we must exit
+        if (count(L == L(i)) > 1) then
+          message = "Invalid usage of L(I) in ACE data; &
+                    &Consider using more recent data set."
+          call fatal_error()
+        end if
+      end do
+      deallocate(L)
       ! Continue with finding data length
       length = length + 2 + 2*NR + 2*NE
       do i = 1,NE
-        ! Some older data sets use the same LDAT for multiple Ein tables.
-        ! If this is the case, we should skip incrementing length when it is
-        ! not needed.
-        if (i < NE) then
-          if (any(L(i) == L(i + 1: NE))) then
-            ! adjust location for this block
-            j = lc + 2 + 2*NR + NE + i
-            XSS(j) = XSS(j) - LOCC - lid
-            cycle
-          end if
-        end if
         ! determine length
         NP = int(XSS(lc + length + 2))
         length = length + 2 + 3*NP
@@ -997,7 +1030,6 @@ contains
         j = lc + 2 + 2*NR + NE + i
         XSS(j) = XSS(j) - LOCC - lid
       end do
-      deallocate(L)
 
     case (5)
       ! General evaporation spectrum
@@ -1030,23 +1062,24 @@ contains
       ! Kalbach-Mann correlated scattering
       NR = int(XSS(lc + 1))
       NE = int(XSS(lc + 2 + 2*NR))
+      ! Before progressing, check to see if data set uses L(I) values
+      ! in a way inconsistent with the current form of the ACE Format Guide
+      ! (MCNP5 Manual, Vol 3)
       allocate(L(NE))
       L = int(XSS(lc + 3 + 2*NR + NE: lc + 3 + 2*NR + 2*NE - 1))
-
+      do i = 1,NE
+        ! Now check to see if L(i) is equal to any other entries
+        ! If so, then we must exit
+        if (count(L == L(i)) > 1) then
+          message = "Invalid usage of L(I) in ACE data; &
+                    &Consider using more recent data set."
+          call fatal_error()
+        end if
+      end do
+      deallocate(L)
       ! Continue with finding data length
       length = length + 2 + 2*NR + 2*NE
       do i = 1,NE
-        ! Some older data sets use the same LDAT for multiple Ein tables.
-        ! If this is the case, we should skip incrementing length when it is
-        ! not needed.
-        if (i < NE) then
-          if (any(L(i) == L(i + 1: NE))) then
-            ! adjust location for this block
-            j = lc + 2 + 2*NR + NE + i
-            XSS(j) = XSS(j) - LOCC - lid
-            cycle
-          end if
-        end if
         NP = int(XSS(lc + length + 2))
         length = length + 2 + 5*NP
 
@@ -1054,30 +1087,29 @@ contains
         j = lc + 2 + 2*NR + NE + i
         XSS(j) = XSS(j) - LOCC - lid
       end do
-      deallocate(L)
 
     case (61)
       ! Correlated energy and angle distribution
       NR = int(XSS(lc + 1))
       NE = int(XSS(lc + 2 + 2*NR))
+      ! Before progressing, check to see if data set uses L(I) values
+      ! in a way inconsistent with the current form of the ACE Format Guide
+      ! (MCNP5 Manual, Vol 3)
       allocate(L(NE))
       L = int(XSS(lc + 3 + 2*NR + NE: lc + 3 + 2*NR + 2*NE - 1))
-
+      do i = 1,NE
+        ! Now check to see if L(i) is equal to any other entries
+        ! If so, then we must exit
+        if (count(L == L(i)) > 1) then
+          message = "Invalid usage of L(I) in ACE data; &
+                    &Consider using more recent data set."
+          call fatal_error()
+        end if
+      end do
+      deallocate(L)
       ! Continue with finding data length
       length = length + 2 + 2*NR + 2*NE
       do i = 1,NE
-        ! Some older data sets use the same LDAT for multiple Ein tables.
-        ! If this is the case, we should skip incrementing length when it is
-        ! not needed.
-        if (i < NE) then
-          if (any(L(i) == L(i + 1: NE))) then
-            ! adjust locators for energy distribution
-            j = lc + 2 + 2*NR + NE + i
-            XSS(j) = XSS(j) - LOCC - lid
-            cycle
-          end if
-        end if
-
         ! outgoing energy distribution
         NP = int(XSS(lc + length + 2))
 
@@ -1099,7 +1131,7 @@ contains
         j = lc + 2 + 2*NR + NE + i
         XSS(j) = XSS(j) - LOCC - lid
       end do
-      deallocate(L)
+
     case (66)
       ! N-body phase space distribution
       length = 2
@@ -1113,7 +1145,15 @@ contains
       ! (MCNP5 Manual, Vol 3)
       allocate(L(NE))
       L = int(XSS(lc + 3 + 2*NR + NE: lc + 3 + 2*NR + 2*NE - 1))
-      ! Don't currently do anything with L
+      do i = 1,NE
+        ! Now check to see if L(i) is equal to any other entries
+        ! If so, then we must exit
+        if (count(L == L(i)) > 1) then
+          message = "Invalid usage of L(I) in ACE data; &
+                    &Consider using more recent data set."
+          call fatal_error()
+        end if
+      end do
       deallocate(L)
       ! Continue with finding data length
       NMU = int(XSS(lc + 4 + 2*NR + 2*NE))
@@ -1327,7 +1367,7 @@ contains
 
       ! Now we can fill the inelastic_data(i) attributes
       do i = 1, NE_in
-        XSS_index = int(LOCC(i))
+        XSS_index = LOCC(i)
         NE_out = table % inelastic_data(i) % n_e_out
         do j = 1, NE_out
           table % inelastic_data(i) % e_out(j) = XSS(XSS_index + 1)
