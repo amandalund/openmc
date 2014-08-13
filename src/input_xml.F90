@@ -220,6 +220,8 @@ contains
       grid_method = GRID_NUCLIDE
     case ('union')
       grid_method = GRID_UNION
+    case('cascade')
+      grid_method = GRID_CASCADE
     case ('lethargy')
       message = "Lethargy mapped energy grid not yet supported."
       call fatal_error()
