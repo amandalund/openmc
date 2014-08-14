@@ -230,6 +230,14 @@ contains
       call fatal_error()
     end select
 
+    ! Find size of energy grid and cross section data
+    if (check_for_node(doc, "grid_size")) then
+      call get_node_value(doc, "grid_size", temp_str)
+      call lower_case(temp_str)
+      if (trim(temp_str) == 'true' .or. trim(temp_str) == '1') &
+           find_grid_size = .true.
+    end if
+
     ! Verbosity
     if (check_for_node(doc, "verbosity")) then
       call get_node_ptr(doc, "verbosity", node_verb)

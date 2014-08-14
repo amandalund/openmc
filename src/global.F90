@@ -91,6 +91,9 @@ module global
   ! What to assume for expanding natural elements
   integer :: default_expand = ENDF_BVII1
 
+  ! Whether to count size of energy and cross section grids
+  logical :: find_grid_size = .false.
+
   ! ============================================================================
   ! TALLY-RELATED VARIABLES
 

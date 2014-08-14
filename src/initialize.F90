@@ -21,6 +21,7 @@ module initialize
   use string,           only: to_str, str_to_int, starts_with, ends_with
   use tally_header,     only: TallyObject, TallyResult
   use tally_initialize, only: configure_tallies
+  use grid_size,        only: get_grid_sizes
 
 #ifdef MPI
   use mpi
@@ -116,6 +117,10 @@ contains
         call time_unionize % start()
         call cascading_grid()
         call time_unionize % stop()
+      end if
+
+      if (find_grid_size == .true.) then
+        call get_grid_sizes()
       end if
 
       ! Allocate and setup tally stride, matching_bins, and tally maps
