@@ -119,7 +119,7 @@ contains
         call time_unionize % stop()
       end if
 
-      if (find_grid_size == .true.) then
+      if (find_grid_size) then
         call get_grid_sizes()
       end if
 
