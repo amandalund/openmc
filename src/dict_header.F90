@@ -17,27 +17,28 @@ module dict_header
 
   implicit none
 
-  integer, parameter, private :: HASH_SIZE       = 4993
+  integer, parameter          :: EMPTY           = -huge(0)
+  integer, parameter          :: KEY_CHAR_LENGTH = 255
+  integer, parameter, private :: MIN_SIZE        = 8
   integer, parameter, private :: HASH_MULTIPLIER = 31
-  integer, parameter, private :: DICT_NULL       = -huge(0)
-  integer, parameter          :: DICT_KEY_LENGTH = 255
+  real(8), parameter, private :: MAX_LOAD_FACTOR = 1.
 
 !===============================================================================
-! ELEMKEYVALUE* contains (key,value) pairs and a pointer to the next (key,value)
+! DICTENTRY* contains (key,value) pairs and a pointer to the next (key,value)
 ! pair
 !===============================================================================
 
-  type ElemKeyValueCI
-    type(ElemKeyValueCI), pointer :: next => null()
-    character(len=DICT_KEY_LENGTH) :: key
-    integer                        :: value
-  end type ElemKeyValueCI
+  type DictEntryCI
+    type(DictEntryCI), pointer :: next => null()
+    character(len=KEY_CHAR_LENGTH) :: key
+    integer :: value
+  end type DictEntryCI
 
-  type ElemKeyValueII
-    type(ElemKeyValueII), pointer :: next => null()
+  type DictEntryII
+    type(DictEntryII), pointer :: next => null()
     integer :: key
     integer :: value
-  end type ElemKeyValueII
+  end type DictEntryII
 
 !===============================================================================
 ! HASHLIST* types contain a single pointer to a linked list of (key,value)
@@ -46,11 +47,11 @@ module dict_header
 !===============================================================================
 
   type, private :: HashListCI
-    type(ElemKeyValueCI), pointer :: list => null()
+    type(DictEntryCI), pointer :: list => null()
   end type HashListCI
 
   type, private :: HashListII
-    type(ElemKeyValueII), pointer :: list => null()
+    type(DictEntryII), pointer :: list => null()
   end type HashListII
 
 !===============================================================================
@@ -60,264 +61,355 @@ module dict_header
 !===============================================================================
 
   type, public :: DictCharInt
-    private
-    type(HashListCI), pointer :: table(:) => null()
+    integer, private :: entries = 0
+    type(HashListCI), allocatable, private :: table(:)
   contains
-    procedure :: add_key => dict_add_key_ci
-    procedure :: get_key => dict_get_key_ci
-    procedure :: has_key => dict_has_key_ci
-    procedure :: keys => dict_keys_ci
-    procedure :: clear => dict_clear_ci
-    procedure, private :: get_elem => dict_get_elem_ci
+    procedure :: add => add_ci
+    procedure :: get => get_ci
+    procedure :: has => has_ci
+    procedure :: keys => keys_ci
+    procedure :: size => size_ci
+    procedure :: clear => clear_ci
+    procedure, private :: get_elem => get_elem_ci
+    procedure, private :: resize => resize_ci
+    procedure, private :: hash => hash_ci
   end type DictCharInt
 
   type, public :: DictIntInt
-    private
-    type(HashListII), pointer :: table(:) => null()
+    integer, private :: entries = 0
+    type(HashListII), allocatable, private :: table(:)
   contains
-    procedure :: add_key => dict_add_key_ii
-    procedure :: get_key => dict_get_key_ii
-    procedure :: has_key => dict_has_key_ii
-    procedure :: keys => dict_keys_ii
-    procedure :: clear => dict_clear_ii
-    procedure, private :: get_elem => dict_get_elem_ii
+    procedure :: add => add_ii
+    procedure :: get => get_ii
+    procedure :: has => has_ii
+    procedure :: keys => keys_ii
+    procedure :: size => size_ii
+    procedure :: clear => clear_ii
+    procedure, private :: get_elem => get_elem_ii
+    procedure, private :: resize => resize_ii
+    procedure, private :: hash => hash_ii
   end type DictIntInt
 
 contains
 
 !===============================================================================
-! DICT_ADD_KEY adds a (key,value) entry to a dictionary. If the key is already
-! in the dictionary, the value is replaced by the new specified value.
+! ADD adds a (key,value) entry to a dictionary. If the key is already in the
+! dictionary, the value is replaced by the new specified value.
 !===============================================================================
 
-  subroutine dict_add_key_ci(this, key, value)
+  subroutine add_ci(this, key, value)
 
     class(DictCharInt) :: this
     character(*), intent(in) :: key
     integer,      intent(in) :: value
 
     integer :: hash
-    type(ElemKeyValueCI), pointer :: elem => null()
-    type(ElemKeyValueCI), pointer :: new_elem => null()
+    type(DictEntryCI), pointer :: elem => null()
+    type(DictEntryCI), pointer :: new_elem => null()
 
-    elem => this % get_elem(key)
-
-    if (associated(elem)) then
-      elem % value = value
-    else
-      ! Get hash
-      hash = dict_hash_key_ci(key)
-
-      ! Create new element
-      allocate(new_elem)
-      new_elem % key = key
-      new_elem % value = value
-
-      ! Add element to front of list
-      new_elem % next => this % table(hash) % list
-      this % table(hash) % list => new_elem
+    if (.not. allocated(this % table)) then
+      allocate(this % table(MIN_SIZE))
+    else if (real(this % entries+1, 8)/size(this % table) > MAX_LOAD_FACTOR) then
+      call this % resize()
     end if
 
-  end subroutine dict_add_key_ci
+    hash = this % hash(key)
 
-  subroutine dict_add_key_ii(this, key, value)
+    elem => this % table(hash) % list
+    do while (associated(elem))
+      if (elem % key == key) then
+        elem % value = value
+        return
+      end if
+      elem => elem % next
+    end do
+
+    ! Create new element
+    allocate(new_elem)
+    new_elem % key = key
+    new_elem % value = value
+
+    ! Add element to front of list
+    new_elem % next => this % table(hash) % list
+    this % table(hash) % list => new_elem
+    this % entries = this % entries + 1
+
+  end subroutine add_ci
+
+  subroutine add_ii(this, key, value)
 
     class(DictIntInt) :: this
     integer, intent(in) :: key
     integer, intent(in) :: value
 
     integer :: hash
-    type(ElemKeyValueII), pointer :: elem => null()
-    type(ElemKeyValueII), pointer :: new_elem => null()
+    type(DictEntryII), pointer :: elem => null()
+    type(DictEntryII), pointer :: new_elem => null()
 
-    elem => this % get_elem(key)
-
-    if (associated(elem)) then
-      elem % value = value
-    else
-      ! Get hash
-      hash = dict_hash_key_ii(key)
-
-      ! Create new element
-      allocate(new_elem)
-      new_elem % key = key
-      new_elem % value = value
-
-      ! Add element to front of list
-      new_elem % next => this % table(hash) % list
-      this % table(hash) % list => new_elem
+    if (.not. allocated(this % table)) then
+      allocate(this % table(MIN_SIZE))
+    else if (real(this % entries+1, 8)/size(this % table) > MAX_LOAD_FACTOR) then
+      call this % resize()
     end if
 
-  end subroutine dict_add_key_ii
+    hash = this % hash(key)
+
+    elem => this % table(hash) % list
+    do while (associated(elem))
+      if (elem % key == key) then
+        elem % value = value
+        return
+      end if
+      elem => elem % next
+    end do
+
+    ! Create new element
+    allocate(new_elem)
+    new_elem % key = key
+    new_elem % value = value
+
+    ! Add element to front of list
+    new_elem % next => this % table(hash) % list
+    this % table(hash) % list => new_elem
+    this % entries = this % entries + 1
+
+  end subroutine add_ii
 
 !===============================================================================
-! DICT_GET_ELEM returns a pointer to the (key,value) pair for a given key. This
+! GET_ELEM returns a pointer to the (key,value) pair for a given key. This
 ! method is private.
 !===============================================================================
 
-  function dict_get_elem_ci(this, key) result(elem)
+  function get_elem_ci(this, key) result(elem)
 
-    class(DictCharInt)            :: this
-    character(*), intent(in)      :: key
-    type(ElemKeyValueCI), pointer :: elem
+    class(DictCharInt)         :: this
+    character(*), intent(in)   :: key
+    type(DictEntryCI), pointer :: elem
 
     integer :: hash
 
     ! Check for dictionary not being allocated
-    if (.not. associated(this % table)) then
-      allocate(this % table(HASH_SIZE))
+    if (.not. allocated(this % table)) then
+      allocate(this % table(MIN_SIZE))
     end if
 
-    hash = dict_hash_key_ci(key)
+    hash = this % hash(key)
     elem => this % table(hash) % list
     do while (associated(elem))
       if (elem % key == key) exit
       elem => elem % next
     end do
 
-  end function dict_get_elem_ci
+  end function get_elem_ci
 
-  function dict_get_elem_ii(this, key) result(elem)
+  function get_elem_ii(this, key) result(elem)
 
-    class(DictIntInt)             :: this
-    integer, intent(in)           :: key
-    type(ElemKeyValueII), pointer :: elem
+    class(DictIntInt)          :: this
+    integer, intent(in)        :: key
+    type(DictEntryII), pointer :: elem
 
     integer :: hash
 
     ! Check for dictionary not being allocated
-    if (.not. associated(this % table)) then
-      allocate(this % table(HASH_SIZE))
+    if (.not. allocated(this % table)) then
+      allocate(this % table(MIN_SIZE))
     end if
 
-    hash = dict_hash_key_ii(key)
+    hash = this % hash(key)
     elem => this % table(hash) % list
     do while (associated(elem))
       if (elem % key == key) exit
       elem => elem % next
     end do
 
-  end function dict_get_elem_ii
+  end function get_elem_ii
 
 !===============================================================================
-! DICT_GET_KEY returns the value matching a given key. If the dictionary does
-! not contain the key, the value DICT_NULL is returned.
+! RESIZE allocates a new hash table to accomodate the number of entries and
+! reinserts all of the entries into the new table. This method is private.
 !===============================================================================
 
-  function dict_get_key_ci(this, key) result(value)
+  subroutine resize_ci(this)
 
-    class(DictCharInt)        :: this
+    class(DictCharInt) :: this
+
+    integer :: i
+    integer :: hash
+    integer :: new_size
+    type(HashListCI), allocatable :: table(:)
+    type(DictEntryCI), pointer :: elem
+    type(DictEntryCI), pointer :: next
+
+    new_size = 2 * size(this % table)
+
+    call move_alloc(this % table, table)
+    allocate(this % table(new_size))
+
+    ! Rehash each entry into the new table
+    do i = 1, size(table)
+      elem => table(i) % list
+      do while (associated(elem))
+        hash = this % hash(elem % key)
+        next => elem % next
+        elem % next => this % table(hash) % list
+        this % table(hash) % list => elem
+        elem => next
+      end do
+    end do
+    deallocate(table)
+
+  end subroutine resize_ci
+
+  subroutine resize_ii(this)
+
+    class(DictIntInt) :: this
+
+    integer :: i
+    integer :: hash
+    integer :: new_size
+    type(HashListII), allocatable :: table(:)
+    type(DictEntryII), pointer :: elem
+    type(DictEntryII), pointer :: next
+
+    new_size = 2 * size(this % table)
+
+    call move_alloc(this % table, table)
+    allocate(this % table(new_size))
+
+    ! Rehash each entry into the new table
+    do i = 1, size(table)
+      elem => table(i) % list
+      do while (associated(elem))
+        hash = this % hash(elem % key)
+        next => elem % next
+        elem % next => this % table(hash) % list
+        this % table(hash) % list => elem
+        elem => next
+      end do
+    end do
+    deallocate(table)
+
+  end subroutine resize_ii
+
+!===============================================================================
+! GET returns the value matching a given key. If the dictionary does not
+! contain the key, the value EMPTY is returned.
+!===============================================================================
+
+  function get_ci(this, key) result(value)
+
+    class(DictCharInt)       :: this
     character(*), intent(in) :: key
     integer                  :: value
 
-    type(ElemKeyValueCI), pointer :: elem
+    type(DictEntryCI), pointer :: elem
 
     elem => this % get_elem(key)
 
     if (associated(elem)) then
       value = elem % value
     else
-      value = DICT_NULL
+      value = EMPTY
     end if
 
-  end function dict_get_key_ci
+  end function get_ci
 
-  function dict_get_key_ii(this, key) result(value)
+  function get_ii(this, key) result(value)
 
     class(DictIntInt)   :: this
     integer, intent(in) :: key
     integer             :: value
 
-    type(ElemKeyValueII), pointer  :: elem
+    type(DictEntryII), pointer :: elem
 
     elem => this % get_elem(key)
 
     if (associated(elem)) then
       value = elem % value
     else
-      value = DICT_NULL
+      value = EMPTY
     end if
 
-  end function dict_get_key_ii
+  end function get_ii
 
 !===============================================================================
-! DICT_HAS_KEY determines whether a dictionary has a (key,value) pair with a
+! HAS determines whether a dictionary has a (key,value) pair with a
 ! given key.
 !===============================================================================
 
-  function dict_has_key_ci(this, key) result(has)
+  function has_ci(this, key) result(has)
 
-    class(DictCharInt)        :: this
+    class(DictCharInt)       :: this
     character(*), intent(in) :: key
     logical                  :: has
 
-    type(ElemKeyValueCI), pointer  :: elem
+    type(DictEntryCI), pointer :: elem
 
     elem => this % get_elem(key)
     has = associated(elem)
 
-  end function dict_has_key_ci
+  end function has_ci
 
-  function dict_has_key_ii(this, key) result(has)
+  function has_ii(this, key) result(has)
 
     class(DictIntInt)   :: this
     integer, intent(in) :: key
     logical             :: has
 
-    type(ElemKeyValueII), pointer  :: elem
+    type(DictEntryII), pointer  :: elem
 
     elem => this % get_elem(key)
     has = associated(elem)
 
-  end function dict_has_key_ii
+  end function has_ii
 
 !===============================================================================
-! DICT_HASH_KEY returns the hash value for a given key
+! HASH returns the hash value for a given key
 !===============================================================================
 
-  function dict_hash_key_ci(key) result(val)
+  function hash_ci(this, key) result(hash)
 
+    class(DictCharInt)       :: this
     character(*), intent(in) :: key
-    integer                  :: val
+    integer                  :: hash
 
     integer :: i
 
-    val = 0
+    hash = 0
 
     do i = 1, len_trim(key)
-      val = HASH_MULTIPLIER * val + ichar(key(i:i))
+      hash = HASH_MULTIPLIER * hash + ichar(key(i:i))
     end do
 
     ! Added the absolute val on val-1 since the sum in the do loop is
     ! susceptible to integer overflow
-    val = 1 + mod(abs(val-1), HASH_SIZE)
+    hash = 1 + mod(abs(hash-1), size(this % table))
 
-  end function dict_hash_key_ci
+  end function hash_ci
 
-  function dict_hash_key_ii(key) result(val)
+  function hash_ii(this, key) result(hash)
 
+    class(DictIntInt)   :: this
     integer, intent(in) :: key
-    integer             :: val
-
-    val = 0
+    integer             :: hash
 
     ! Added the absolute val on val-1 since the sum in the do loop is
     ! susceptible to integer overflow
-    val = 1 + mod(abs(key-1), HASH_SIZE)
+    hash = 1 + mod(abs(key-1), size(this % table))
 
-  end function dict_hash_key_ii
+  end function hash_ii
 
 !===============================================================================
-! DICT_KEYS returns a pointer to a linked list of all (key,value) pairs
+! KEYS returns a pointer to a linked list of all (key,value) pairs
 !===============================================================================
 
-  function dict_keys_ci(this) result(keys)
-    class(DictCharInt)            :: this
-    type(ElemKeyValueCI), pointer :: keys
+  function keys_ci(this) result(keys)
+    class(DictCharInt)         :: this
+    type(DictEntryCI), pointer :: keys
 
     integer :: i
-    type(ElemKeyValueCI), pointer :: current => null()
-    type(ElemKeyValueCI), pointer :: elem => null()
+    type(DictEntryCI), pointer :: current => null()
+    type(DictEntryCI), pointer :: elem => null()
 
     keys => null()
 
@@ -344,15 +436,15 @@ contains
       end do
     end do
 
-  end function dict_keys_ci
+  end function keys_ci
 
-  function dict_keys_ii(this) result(keys)
-    class(DictIntInt)             :: this
-    type(ElemKeyValueII), pointer :: keys
+  function keys_ii(this) result(keys)
+    class(DictIntInt)          :: this
+    type(DictEntryII), pointer :: keys
 
     integer :: i
-    type(ElemKeyValueII), pointer :: current => null()
-    type(ElemKeyValueII), pointer :: elem => null()
+    type(DictEntryII), pointer :: current => null()
+    type(DictEntryII), pointer :: elem => null()
 
     keys => null()
 
@@ -379,21 +471,21 @@ contains
       end do
     end do
 
-  end function dict_keys_ii
+  end function keys_ii
 
 !===============================================================================
-! DICT_CLEAR Deletes and deallocates the dictionary item
+! CLEAR Deletes and deallocates the dictionary item
 !===============================================================================
 
-  subroutine dict_clear_ci(this)
+  subroutine clear_ci(this)
 
     class(DictCharInt) :: this
 
     integer :: i
-    type(ElemKeyValueCI), pointer :: current
-    type(ElemKeyValueCI), pointer :: next
+    type(DictEntryCI), pointer :: current
+    type(DictEntryCI), pointer :: next
 
-    if (associated(this % table)) then
+    if (allocated(this % table)) then
       do i = 1, size(this % table)
         current => this % table(i) % list
         do while (associated(current))
@@ -411,17 +503,17 @@ contains
       deallocate(this % table)
     end if
 
-  end subroutine dict_clear_ci
+  end subroutine clear_ci
 
-  subroutine dict_clear_ii(this)
+  subroutine clear_ii(this)
 
     class(DictIntInt) :: this
 
     integer :: i
-    type(ElemKeyValueII), pointer :: current
-    type(ElemKeyValueII), pointer :: next
+    type(DictEntryII), pointer :: current
+    type(DictEntryII), pointer :: next
 
-    if (associated(this % table)) then
+    if (allocated(this % table)) then
       do i = 1, size(this % table)
         current => this % table(i) % list
         do while (associated(current))
@@ -439,6 +531,28 @@ contains
       deallocate(this % table)
     end if
 
-  end subroutine dict_clear_ii
+  end subroutine clear_ii
+
+!===============================================================================
+! SIZE returns the number of entries in the dictionary
+!===============================================================================
+
+  pure function size_ci(this) result(size)
+
+    class(DictCharInt), intent(in) :: this
+    integer :: size
+
+    size = this % entries
+
+  end function size_ci
+
+  pure function size_ii(this) result(size)
+
+    class(DictIntInt), intent(in) :: this
+    integer :: size
+
+    size = this % entries
+
+  end function size_ii
 
 end module dict_header
