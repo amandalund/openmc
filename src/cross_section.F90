@@ -109,7 +109,8 @@ contains
 
         ! Copy atom density of nuclide in material
         if (mat % continuous_num_density) then
-          atom_density = mat % poly_densities(i) % obj % evaluate(p % coord(p % n_coord) % xyz)
+          atom_density = mat % poly_densities(i) % obj % &
+               evaluate(p % coord(p % n_coord) % xyz)
         else
           atom_density = mat % atom_density(i)
         endif

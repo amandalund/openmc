@@ -52,8 +52,8 @@ module material_header
     function evaluate_(this, xyz) result(property_value)
       import PolyProperty
       class(PolyProperty), intent(inout) :: this
-      real(8),             intent(in) :: xyz(3)
-      real(8)                         :: property_value
+      real(8),             intent(in)    :: xyz(3)
+      real(8)                            :: property_value
     end function evaluate_
 
   end interface
@@ -310,28 +310,28 @@ contains
   end subroutine free_memory_material
 
 !===============================================================================
-! EVALUATE_ZERNIKE1D this funciton evaluates the zernike property distribution
+! EVALUATE_ZERNIKE1D this function evaluates the zernike property distribution
 !===============================================================================
 
   function evaluate_zernike1d(this, xyz) result(property)
     class(Zernike1DProperty), intent(inout) :: this
-    real(8),        intent(in) :: xyz(3)        ! x,y,z coordinates
-    real(8)                    :: property      ! Property being evaluated
+    real(8),                  intent(in)    :: xyz(3)
+    real(8)                                 :: property
 
-    integer                    :: i             ! Loop index
-    real(8)                    :: rho           ! Normalized radial position
-    integer                    :: c_index       ! Coefficient index counter
-    real(8)                    :: poly_val      ! Value of the polynomial
+    integer :: i        ! loop index
+    integer :: c_index  ! coefficient index counter
+    real(8) :: rho      ! normalized radial position
+    real(8) :: poly_val ! value of the polynomial
 
     ! Initialize property
-    property = 0.0
+    property = ZERO
 
     ! Get normalized positions
-    rho = sqrt(  xyz(1) *  xyz(1) + xyz(2) *  xyz(2) ) / this % coeffs(1)
+    rho = sqrt(xyz(1)**2 + xyz(2)**2) / this % coeffs(1)
 
     c_index = 2
-    do i = 0, this % order(1),2
-      poly_val = calc_zn_one_d(i,rho,0.0_8)
+    do i = 0, this % order(1), 2
+      poly_val = calc_zn_1D(i, rho)
       property = property + poly_val * this % coeffs(c_index)
       c_index = c_index + 1
     end do
@@ -339,41 +339,42 @@ contains
   end function evaluate_zernike1d
 
 !===============================================================================
-! EVALUATE_ZERNIKE this funciton evaluates the zernike property distribution
+! EVALUATE_ZERNIKE this function evaluates the zernike property distribution
 !===============================================================================
 
   function evaluate_zernike(this, xyz) result(property)
     class(ZernikeProperty), intent(inout) :: this
-    real(8),        intent(in) :: xyz(3)
-    real(8)                    :: property
+    real(8),                intent(in)    :: xyz(3)
+    real(8)                               :: property
 
-    integer                    :: i,j,k                ! Loop index
-    real(8)                    :: rho
-    real(8)                    :: phi
+    integer :: i, j, k
+    real(8) :: rho
+    real(8) :: phi
 
     ! Initialize property
-    property = 0.0
+    property = ZERO
 
     ! Get normalized positions
-    rho = sqrt(  xyz(1) *  xyz(1) + xyz(2) *  xyz(2) ) / this % coeffs(1)
-    phi = atan2(xyz(2),xyz(1))
+    rho = sqrt(xyz(1)**2 + xyz(2)**2) / this % coeffs(1)
+    phi = atan2(xyz(2), xyz(1))
 
-    k = 2  ! Keeps tracking of index in this % coeffs
-    call calc_zn(this%order(1),rho,phi, this % poly_norm, this % poly_results)
+    call calc_zn(this % order(1), rho, phi, this % poly_norm, &
+         this % poly_results)
+
+    ! Keeps tracking of index in this % coeffs
+    k = 2  
     do i = 0, this % order(1)
-      do j = 1, i+1
+      do j = 1, i + 1
         property = property + this % poly_results(k-1) * this % coeffs(k)
-        !write(*,*) 'this % poly_results(',k,') = ', this % poly_results(k-1)
-        !write(*,*) 'this % coeffs(',k,') = ', this % coeffs(k)
         k = k + 1
       end do
     end do
 
-    if (property < -1E-8) then
-      write(*,*) 'Property = ', property
-      call fatal_error('A negative number density below -1E-8 was calculated')
+    if (property < -1.e-8) then
+      call fatal_error("Number density is less than -1.e-8: " &
+           // trim(to_str(property)))
     else if (property < 0) then
-      call warning('A negative number density between -1E-8 and 0 was calculated')
+      call warning("Number density is negative: " // trim(to_str(property)))
     end if
 
   end function evaluate_zernike

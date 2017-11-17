@@ -69,11 +69,15 @@ module simulation_header
 ! ============================================================================
 ! CONTINUOUS TRACKING SIMULATION VARIABLES
 
-  integer    :: num_intervals = 10
+  integer :: num_intervals = 10
+
   ! Debug file counter
   integer :: dbg_file_counter = 0
 
-!$omp threadprivate(trace, thread_id, current_work)
+  ! The total cross section along flight path
+  real(8), allocatable :: xs_t(:)
+
+!$omp threadprivate(trace, thread_id, current_work, xs_t)
 
 contains
 
@@ -97,6 +101,7 @@ contains
     if (allocated(entropy_p)) deallocate(entropy_p)
     if (allocated(source_frac)) deallocate(source_frac)
     if (allocated(work_index)) deallocate(work_index)
+    if (allocated(xs_t)) deallocate(xs_t)
   end subroutine free_memory_simulation
 
 end module simulation_header

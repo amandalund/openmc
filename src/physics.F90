@@ -179,7 +179,8 @@ contains
       ! Find atom density
       i_nuclide = mat % nuclide(i_nuc_mat)
       if (mat % continuous_num_density) then
-        atom_density = mat % poly_densities(i_nuc_mat) % obj % evaluate(p % coord(p % n_coord) % xyz)
+        atom_density = mat % poly_densities(i_nuc_mat) % obj % &
+             evaluate(p % coord(p % n_coord) % xyz)
       else
         atom_density = mat % atom_density(i_nuc_mat)
       end if

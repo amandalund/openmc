@@ -47,12 +47,10 @@ contains
     real(8) :: d_collision            ! sampled distance to collision
     real(8) :: distance               ! distance particle travels
     logical :: found_cell             ! found cell which particle is in?
-    real(8) :: tau_hat                ! Optical depth used in newton's method
-    real(8) :: optical_depth          ! Optical depth integral
-    real(8), allocatable :: xs_t(:)   ! The total cross section along flight path
-    real(8) :: PNC                    ! Probilitiy of no collision
-    real(8) :: xyz_orig(3)            ! Original xyz coordinate of the
-                                      ! of the particle
+    real(8) :: tau_hat                ! optical depth used in newton's method
+    real(8) :: optical_depth          ! optical depth integral
+    real(8) :: pnc                    ! probilitiy of no collision
+    real(8) :: xyz_orig(3)            ! original xyz coordinate of the particle
 
     ! Display message if high verbosity or trace is on
     if (verbosity >= 9 .or. trace) then
@@ -137,30 +135,30 @@ contains
       ! Sample a distance to collision
       if (material_xs % total == ZERO) then
         d_collision = INFINITY
-      else if (materials(p % material) % continuous_num_density) then
-        ! Continuous material tracking
-        if (.not. allocated(xs_t)) allocate(xs_t(num_intervals+1))
 
+      ! Continuous material tracking
+      else if (materials(p % material) % continuous_num_density) then
         ! Integrate along complete neutron flight path
-        call simpsons_path_integration(p, optical_depth, d_boundary, xs_t, .false., 0)
+        call simpsons_path_integration(p, optical_depth, xs_t, d_boundary)
 
         ! Sample the collision for analytic density
-        PNC = exp(-optical_depth)
+        pnc = exp(-optical_depth)
 
-        if (prn() <= PNC) then
-          ! No Collision
+        ! No Collision
+        if (prn() <= pnc) then
           d_collision = INFINITY
-        else
-          ! Collision
 
+        ! Collision
+        else
           ! Sample optical depth
-          tau_hat = -log(ONE - (ONE - PNC) * prn())
+          tau_hat = -log(ONE - (ONE - pnc) * prn())
 
           ! Get the flight distance for sampled optical depth
           call estimate_flight_distance(xs_t, d_boundary, tau_hat, d_collision)
 
           ! Move particle to the point of collision so we can make sure that
-          ! cross sections are updated for later tallying of keff and user tallies
+          ! cross sections are updated for later tallying of keff and user
+          ! tallies
           xyz_orig = p % coord(p % n_coord) % xyz
           call move_particle_coord(p % coord(p % n_coord), d_collision)
           call calculate_xs(p)
@@ -168,6 +166,7 @@ contains
           ! Move particle back
           p % coord(p % n_coord) % xyz = xyz_orig
         end if
+
       else
         d_collision = -log(prn()) / material_xs % total
       end if
@@ -320,10 +319,10 @@ contains
 ! MOVE_PARTICLE_COORD moves particle along integration path
 !===============================================================================
 
-  subroutine move_particle_coord(coord,ds)
+  subroutine move_particle_coord(coord, ds)
 
     type(LocalCoord), intent(inout) :: coord
-    real(8), intent(in) :: ds          ! Path length to move particle
+    real(8),          intent(in)    :: ds    ! path length to move particle
 
     ! Move particle along path
     coord % xyz(1) = coord % xyz(1) + ds*coord % uvw(1);
@@ -337,366 +336,261 @@ contains
 ! section along the particle path
 !===============================================================================
 
-  subroutine simpsons_path_integration(p, optical_depth, distance,  &
-                                      xs_t, dbg_file, it_num)
+  subroutine simpsons_path_integration(p, optical_depth, xs_t, distance)
 
-    type(Particle), intent(inout) :: p      ! Particle of interest
-    real(8), intent(inout) :: optical_depth ! Total optical depth integration
-    real(8), intent(in) :: distance         ! Total distance to integrate
-    logical, intent(in) :: dbg_file         ! Debug flag to write to file
-    real(8) :: ds                           ! Differential path length
-    real(8) :: new_temp                     ! Temperature at current position
-    character(len=90) :: format             ! Format of the dbg output
-    character(len=90) :: fname              ! Filename to print total cross
-    integer :: i                            ! Iterator for intervals
-    integer :: it_num                       ! This is needed only for output
-    type(LocalCoord) :: coord               ! Coordinate level of
-                                            ! continuous transport cell
-                                            ! path
-    real(8), intent(inout) :: xs_t(:)
+    type(Particle), intent(inout) :: p
+    real(8),        intent(inout) :: optical_depth
+    real(8),        intent(inout) :: xs_t(:)
+    real(8),        intent(in)    :: distance
 
-    ! We need to get a the lowest coordinate level
-    ! This is an assumption of the method.
+    integer           :: i
+    real(8)           :: ds       ! differential path length
+    real(8)           :: new_temp ! temperature at current position
+    character(len=90) :: format   ! format of the dbg output
+    character(len=90) :: fname    ! filename to print total cross
+    type(LocalCoord)  :: coord    ! coordinate level of continuous transport
+
+    ! We need to get the lowest coordinate level. This is an assumption of the
+    ! method.
     coord = p % coord(p % n_coord)
 
     ! Calculate differential path length
     ds = distance / real(num_intervals,8)
 
-    if (dbg_file) then
-       write(fname, '( "particle_",I0.5,"_fc_",I0.5,"_it_",I0.5,".out" )' ) &
-            p%id, dbg_file_counter, it_num
-       write(*,*) 'Opening file', fname
-       open(unit = 1001, file=fname)
-       format = '( E21.10, ",",  E21.10, ",", E21.10, ",", E21.10, ",", E21.10, ",", E21.10, ",", E21.10)'
-       !            x             y          z             temp          xs_t
-       ! or first row u           v          w           energy           ds
-       write(1001, format) p % coord(p % n_coord) % uvw(1), p % coord(p % n_coord) % uvw(2), &
-            p % coord(p % n_coord) % uvw(3), p % E, ds
-    endif
+    do i = 1, num_intervals + 1
+      ! Recalculate the cross section
+      call calculate_xs(p)
 
-    do i=1,(num_intervals+1)
-       ! Recalculate the cross section
-       call calculate_xs(p)
-       ! Save the total cross section
-       xs_t(i) = material_xs % total
+      ! Save the total cross section
+      xs_t(i) = material_xs % total
 
-       if(dbg_file) then
-          write(*,*) 'String being written to file ', fname, ':'
-          write(*,*) p % coord(p % n_coord) % xyz(1),  p % coord(p % n_coord) % xyz(2), &
-               p % coord(p % n_coord) % xyz(3), new_temp, xs_t(i)
-          write(1001, format) p % coord(p % n_coord) % xyz(1), p % coord(p % n_coord) % xyz(2), &
-               p % coord(p % n_coord) % xyz(3), new_temp, xs_t(i)
-       endif
-       ! Move particle along path
-       call move_particle_coord(p % coord(p % n_coord),ds)
-    enddo
+      ! Move particle along path
+      call move_particle_coord(p % coord(p % n_coord), ds)
+    end do
 
     p % coord(p % n_coord) = coord
 
-    optical_depth = 0.0
+    optical_depth = ZERO
 
-    do i=1,(num_intervals-1),2
-       ! Add to the integral
-       optical_depth = optical_depth + &
-            2.0_8 * ds / 6.0_8 * ( xs_t(i) + 4.0_8 * xs_t(i+1) + xs_t(i+2))
-    enddo
-
-    if(dbg_file) close(1001)
+    do i = 1, num_intervals - 1, 2
+      ! Accumulate integral
+      optical_depth = optical_depth + &
+           TWO * ds / 6.0_8 * (xs_t(i) + FOUR * xs_t(i+1) + xs_t(i+2))
+    end do
 
   end subroutine simpsons_path_integration
 
+!===============================================================================
+! ESTIMATE_FLIGHT_DISTANCE
+!===============================================================================
+
   subroutine estimate_flight_distance(xs_t, distance, tau_hat, s)
 
-    real(8), intent(inout) :: s              ! The estimated flight distance
-    real(8), intent(in) :: distance          ! Total distance to integrate
-    real(8), intent(in)  :: xs_t(:)          ! Total cross sections at each point on path
-    real(8), intent(in)  :: tau_hat          ! The sampled optical depth
-    real(8) :: ds                            ! Spacing between points.  Assumed to be constant.
-    real(8) :: delta_tau_hat                 ! The delta tau hat that we are solving for in the bin
+    real(8), intent(inout) :: s     ! estimated flight distance
+    real(8), intent(in) :: distance ! total distance to integrate
+    real(8), intent(in) :: xs_t(:)  ! total cross sections at each point on path
+    real(8), intent(in) :: tau_hat  ! sampled optical depth
+
+    integer :: i
+    logical :: tau_overrun   ! search for the correct bin failed?
+    real(8) :: ds            ! spacing between points, assumed constant
+    real(8) :: delta_tau_hat ! delta tau hat that we are solving for in the bin
     real(8) :: optical_depth
-    integer :: index
-    logical :: tau_overrun                   ! Indicates if the search for the correct bin failed
-    real(8) :: a,b,c,d                       ! Polynomial expansion values
-    real(8) :: m                             ! Slope of a linear guess for quadratic polynomial
-    real(8) :: dds                           ! The differential lenght in the particular pin
+    real(8) :: a, b, c, d    ! polynomial expansion values
+    real(8) :: m             ! slope of a linear guess for quadratic polynomial
+    real(8) :: dds           ! differential length in the particular pin
 
     ! Calculate differential path length
     ds = distance / real(num_intervals,8)
 
     ! Set variables for loop
-    optical_depth = 0.0
-    index = 1
-    tau_overrun = .FALSE.
+    i = 1
+    optical_depth = ZERO
+    tau_overrun = .false.
 
     ! Find the index of the cell that goes over the sampled path integration
     do while(optical_depth <= tau_hat)
-       if (index > (num_intervals - 1)) then
-          tau_overrun = .TRUE.
-          optical_depth = tau_hat
-       else
-          optical_depth = optical_depth + &
-               2.0_8 * ds / 6.0_8 * ( xs_t(index) + &
-               4.0_8 * xs_t(index+1) + xs_t(index+2))
-          index = index + 2
-       endif
-    enddo
+      if (i > (num_intervals - 1)) then
+        tau_overrun = .true.
+        optical_depth = tau_hat
+      else
+        optical_depth = optical_depth + TWO * ds / 6.0_8 * (xs_t(i) + FOUR * &
+             xs_t(i+1) + xs_t(i+2))
+        i = i + 2
+      end if
+    end do
 
     ! Subtract off the last delta optical depth that we added
-    index = index - 2
-    optical_depth = optical_depth - &
-         2.0_8 * ds / 6.0_8 * ( xs_t(index) + &
-         4.0_8 * xs_t(index+1) + xs_t(index+2))
+    i = i - 2
+    optical_depth = optical_depth - TWO * ds / 6.0_8 * (xs_t(i) + FOUR * &
+         xs_t(i+1) + xs_t(i+2))
+
     ! Calculate the delta in the optical depth
     delta_tau_hat = tau_hat - optical_depth
 
     if (tau_overrun) then
-       write(*,*) 'WARNING: The search for the optical depth bin failed'
-       write(*,*) 'tau_hat = ', tau_hat
-       write(*,*) 'optical_depth = ', optical_depth
-       s = distance
+      call warning("Search for the optical depth bin failed.")
+      s = distance
     else
+      ! Determine the coefficients for a second order expansion in that bin
+      ! sigma_t = ax^2 + bx + c
+      ! Note that we are shifting the portion of the curve so that the first
+      ! point lies at zero. This makes integration much easier.
+      c = xs_t(i)
+      b = (TWO * xs_t(i+1) - HALF * xs_t(i+2) - 1.5_8 * c) / ds
+      a = (xs_t(i+2) - c - TWO * ds * b) / (FOUR * ds * ds)
 
-       ! Determine the coefficients for a second order expansion in that bin
-       ! sigma_t = ax^2 + bx + c
-       ! Note that we are shifting the portion of the curve so that the first
-       ! point lies at zero.  This makes integration much easier.
-       c = xs_t(index)
-       b = ( 2.0_8*xs_t(index+1) - 0.5_8*xs_t(index+2) - 1.5_8*c ) / (ds)
-       a = ( xs_t(index+2) - c - 2.0_8*ds*b ) / (4.0_8*ds*ds)
-       ! Define quantities for solution of the cubic equation
-       b = b / 2.0_8
-       a = a / 3.0_8
-       d = -delta_tau_hat
-       ! If the polynomial is not truly cubic, the soluiton will blow up
-       ! Choose between integrated polynomial of cubic,quadratic, and linear
-       if ( abs(a) > 1E-10) then
-          call get_cubic_root(a,b,c,d,0.0_8,2.0_8*ds,dds)
-          s = ds * (index-1) + dds
+      ! Define quantities for solution of the cubic equation
+      b = b / TWO
+      a = a / THREE
+      d = -delta_tau_hat
 
-          !write(*,*) 'a = ', a
-          !write(*,*) 'b = ', b
-          !write(*,*) 'c = ', c
-          !write(*,*) 'd = ', d
-          !write(*,*) 'ds = ', ds
-          !write(*,*) 'index = ', index
-          !write(*,*) 'xs_t(1) = ', xs_t(index)
-          !write(*,*) 'xs_t(2) = ', xs_t(index+1)
-          !write(*,*) 'xs_t(3) = ', xs_t(index+2)
-          !write(*,*) 's = ', s
-          !write(*,*) 'distance = ', distance
-          !write(*,*) 'optical_depth = ', optical_depth
-          !write(*,*) 'tau_hat = ', tau_hat
-          !write(*,*) 'delta_tau_hat = ', delta_tau_hat
-          !write(*,*) 'dds = ', dds
-          !call fatal_error('WARNING: non-real roots detected for cubic equation')
-       else if ( abs(b) > 1E-10 ) then
-          ! Get the best guest for root based on a linear fit
-          m = ( xs_t(index+2) - xs_t(index) ) / (2.0_8 * ds)
-          call get_quadratic_root(0.5*m, c, d, 0.0_8, 2.0*ds, dds)
-          s = ds * (index-1) + dds
-          !write(*,*) 'a = ', 0.5*m
-          !write(*,*) 'b = ', c
-          !write(*,*) 'c = ', d
-          !write(*,*) 'ds = ', ds
-          !write(*,*) 'index = ', index
-          !write(*,*) 'xs_t(1) = ', xs_t(index)
-          !write(*,*) 'xs_t(2) = ', xs_t(index+1)
-          !write(*,*) 'xs_t(3) = ', xs_t(index+2)
-          !write(*,*) 's = ', s
-          !write(*,*) 'distance = ', distance
-          !write(*,*) 'optical_depth = ', optical_depth
-          !write(*,*) 'tau_hat = ', tau_hat
-          !write(*,*) 'delta_tau_hat = ', delta_tau_hat
-          !write(*,*) 'dds = ', dds
-       else
-          ! This is the case where the cross section is constant.
-          s = ds * (index-1) - d/c
-          ! Put some checks in for now
-          if (s < (ds * (index-1)) .OR. s > (ds * (index+1)) ) then
-             write(*,*) 'a = ', a
-             write(*,*) 'b = ', b
-             write(*,*) 'c = ', c
-             write(*,*) 'ds = ', ds
-             write(*,*) 'xs_t(1) = ', xs_t(index)
-             write(*,*) 'xs_t(2) = ', xs_t(index+1)
-             write(*,*) 'xs_t(3) = ', xs_t(index+2)
-             write(*,*) 's = ', s
-             write(*,*) 'distance = ', distance
-             write(*,*) 'optical_depth = ', optical_depth
-             write(*,*) 'tau_hat = ', tau_hat
-             write(*,*) 'delta_tau_hat = ', delta_tau_hat
-             write(*,*) 'index = ' , index
-             write(*,*) 'ds*(index-1) = ', ds * (index-1)
-             write(*,*) 'ds*(index) = ', ds * (index)
-             call fatal_error('s for the constant cross section case lies out of bounds')
-          endif
-       endif
-    endif
-    if (s > distance .OR. s < 0.0) then
-       write(*,*) 'a = ', a
-       write(*,*) 'b = ', b
-       write(*,*) 'c = ', c
-       write(*,*) 'd = ', d
-       write(*,*) 'ds = ', ds
-       write(*,*) 'index = ', index
-       write(*,*) 'ds*(index-1)', ds*(index-1)
-       write(*,*) 'xs_t(1) = ', xs_t(index)
-       write(*,*) 'xs_t(2) = ', xs_t(index+1)
-       write(*,*) 'xs_t(3) = ', xs_t(index+2)
-       write(*,*) 's = ', s
-       write(*,*) 'distance = ', distance
-       write(*,*) 'optical_depth = ', optical_depth
-       write(*,*) 'tau_hat = ', tau_hat
-       write(*,*) 'delta_tau_hat = ', delta_tau_hat
-       write(*,*) 'dds = ', dds
-       call fatal_error('The predicted distance is greater than distance to boundary or less than zero')
+      ! If the polynomial is not truly cubic, the soluiton will blow up.
+      ! Choose between integrated polynomial of cubic, quadratic, and linear
+      if (abs(a) > 1.e-10) then
+        call get_cubic_root(a, b, c, d, ZERO, TWO*ds, dds)
+        s = ds * (i - ONE) + dds
+
+      else if (abs(b) > 1.e-10) then
+        ! Get the best guest for root based on a linear fit
+        m = (xs_t(i+2) - xs_t(i)) / (TWO * ds)
+        call get_quadratic_root(HALF*m, c, d, ZERO, TWO*ds, dds)
+        s = ds * (i - ONE) + dds
+
+      else
+        ! This is the case where the cross section is constant.
+        s = ds * (i - ONE) - d / c
+
+        ! Put some checks in for now
+        if (s < (ds * (i - ONE)) .or. s > (ds * (i + ONE)) ) then
+          call fatal_error("Estimated flight distance for the constant cross &
+               &section case lies out of bounds.")
+        end if
+      end if
+    end if
+
+    if (s > distance .or. s < ZERO) then
+      call fatal_error("The estimated flight distance is greater than the &
+           &distance to boundary or less than zero.")
     endif
 
   end subroutine estimate_flight_distance
 
+!===============================================================================
+! GET_QUADTRATIC_ROOT returns the first quadratic root in the interval
+! [lower_b, upper_b]
+!===============================================================================
+
   subroutine get_quadratic_root(a, b, c, lower_b, upper_b, root)
 
-    ! This function returns the first quadratic root in the interval
-    ! [lower_b, upper_b]
+    real(8), intent(inout) :: root    ! root of the equation
+    real(8), intent(in)    :: a, b, c ! coefficients in ax^2 + bx + c
+    real(8), intent(in)    :: lower_b ! lower bound of search
+    real(8), intent(in)    :: upper_b ! upper bound of search
 
-    real(8), intent(in) :: a,b,c    ! Coefficients in ax^2 + bx + c
-    real(8), intent(in) :: lower_b  ! Lower bound of search
-    real(8), intent(in) :: upper_b  ! Upper bound of search
-    real(8), intent(inout) :: root  ! The root of the equation
-    real(8) :: q                    ! Variable for numeric solution
-    real(8) :: C_1, C_2             ! The two roots
-    real(8) :: inner_sqrt           ! Temporary variabel to check if real
-    real(8) :: e1, e2, e3, e4       ! Errors when root goes over bound
-    real(8) :: min_error            ! Min error used to determie which root
-                                    ! should be assigned
+    real(8) :: q              ! for numeric solution
+    real(8) :: c_1, c_2       ! the two roots
+    real(8) :: inner_sqrt     ! temporary variable to check if real
+    real(8) :: e1, e2, e3, e4 ! errors when root goes over bound
+    real(8) :: min_error      ! min error used to determine which root should
+                              ! be assigned
 
-    inner_sqrt = b*b - 4.0_8*a*c
+    inner_sqrt = b * b - FOUR * a * c
 
-    if( inner_sqrt < 0.0) then
-       write(*,*) 'a = ', a
-       write(*,*) 'b = ', b
-       write(*,*) 'c = ', c
-       write(*,*) 'inner_sqrt = ', inner_sqrt
-       call fatal_error('Non real roots for quadratic equation')
-    else if (inner_sqrt >= 0) then
+    if (inner_sqrt < ZERO) then
+      call fatal_error("Non-real roots for quadratic equation.")
+    else
+      q = -ONE / TWO * (b + sign(ONE,b) * sqrt(inner_sqrt))
+      c_1 = q / a
+      c_2 = c / q
 
-       q = -1.0_8 / 2.0_8 * ( b + sign(1.0_8,b) * sqrt(inner_sqrt) )
-       C_1 = q / a
-       C_2 = c / q
+      if (c_1 >= lower_b .and. c_1 <= upper_b) then
+        root = c_1
+      else if (c_2 >= lower_b .and. c_2 <= upper_b) then
+        root = c_2
+      else
+        e1 = abs(c_1 - lower_b)
+        e2 = abs(c_1 - upper_b)
+        e3 = abs(c_2 - lower_b)
+        e4 = abs(c_2 - upper_b)
+        min_error = min(e1, e2, e3, e4)
+        if (abs(e1) == min_error .or. abs(e3) == min_error) then
+          root = lower_b
+        else if (abs(e2) == min_error .or. abs(e4) == min_error) then
+          root = upper_b
+        else
+          call fatal_error("Invalid case for handling quadratic bounds overload.")
+        end if
 
-       if (C_1 >= lower_b .AND. C_1 <= upper_b) then
-          root = C_1
-       else if (C_2 >= lower_b .AND. C_2 <= upper_b) then
-          root = C_2
-       else
-          e1 = abs(C_1 - lower_b)
-          e2 = abs(C_1 - upper_b)
-          e3 = abs(C_2 - lower_b)
-          e4 = abs(C_2 - upper_b)
-          min_error = min(e1, e2, e3, e4)
-          if ( abs(e1) == min_error .OR. abs(e3) == min_error) then
-             root = lower_b
-          else if ( abs(e2) == min_error .OR. abs(e4) == min_error) then
-             root = upper_b
-          else
-             call fatal_error('Invalid case for handling quadratic bounds overload')
-          endif
-
-          write(*,*) 'C_1 = ', C_1
-          write(*,*) 'C_2 = ', C_2
-          write(*,*) 'Lower bound = ', lower_b
-          write(*,*) 'Upper bound = ', upper_b
-          write(*,*) 'C_1 - lower_bound = ', C_1 - lower_b
-          write(*,*) 'C_2 - lower_bound = ', C_2 - lower_b
-          write(*,*) 'C_1 - upper_bound = ', C_1 - upper_b
-          write(*,*) 'C_2 - upper_bound = ', C_2 - upper_b
-          write(*,*) 'a = ', a
-          write(*,*) 'b = ', b
-          write(*,*) 'c = ', c
-          write(*,*) 'ERROR:  Neither quadratic roots satisifed the criteria'
-          call warning('Quadratic roots not within 1E-5 of bounds')
-       endif
-    endif
+        call warning("Quadratic roots are not within 1.e-5 of bounds")
+      end if
+    end if
 
   end subroutine get_quadratic_root
 
+!===============================================================================
+! GET_CUBIC_ROOT
+!===============================================================================
+
   subroutine get_cubic_root(a, b, c, d, lower_b, upper_b, root)
 
-    real(8), intent(in) :: a,b,c,d  ! Coefficients in ax^3 + bx^2 + cx + d = 0
-    real(8), intent(in) :: lower_b  ! Lower bound of search
-    real(8), intent(in) :: upper_b  ! Upper bound of search
-    real(8), intent(inout) :: root  ! The root of the equation
-    real(8) :: aa, bb, cc           ! Coefficients in x^3 + aa x^2 + bb x + cc = 0
-    real(8) :: Q, R, dd, ee, theta  ! Temporary variables needed in root finding
+    real(8), intent(inout) :: root    ! root of the equation
+    real(8), intent(in) :: a, b, c, d ! coefficients in ax^3 + bx^2 + cx + d = 0
+    real(8), intent(in) :: lower_b    ! lower bound of search
+    real(8), intent(in) :: upper_b    ! upper bound of search
+
+    real(8) :: aa, bb, cc          ! coefficients in x^3 + aa x^2 + bb x + cc = 0
+    real(8) :: q, r, dd, ee, theta ! temporary variables needed in root finding
 
     ! Calculate coefficients as they appear in the numerical recipes book
     aa = b / a
     bb = c / a
     cc = d / a
 
-    Q = (aa*aa - 3.0_8 * bb) / (9.0_8)
-    R = (2.0_8*aa*aa*aa - 9.0_8*aa*bb + 27.0_8*cc) / (54.0_8)
+    q = (aa**2 - THREE * bb) / 9.0_8
+    r = (TWO * aa**3 - 9.0_8*aa*bb + 27.0_8*cc) / 54.0_8
 
-    if (R*R < Q*Q*Q) then
-       theta = acos(R/sqrt(Q*Q*Q))
-       root = -2.0_8 * sqrt(Q) * cos(theta/3.0_8) - aa / 3.0_8
-       if (root < lower_b .OR. root > upper_b) then
-          root = -2.0_8 * sqrt(Q) * cos( (theta + 2.0_8*PI)/3.0_8) - aa / 3.0_8
-          if (root < lower_b .OR. root > upper_b) then
-             root = -2.0_8 * sqrt(Q) * cos( (theta - 2.0_8*PI)/3.0_8) - aa / 3.0_8
-             if (root < lower_b .OR. root > upper_b) then
+    if (r**2 < q**3) then
+       theta = acos(r / sqrt(q**3))
+       root = -TWO * sqrt(q) * cos(theta / THREE) - aa / THREE
+       if (root < lower_b .or. root > upper_b) then
+          root = -TWO * sqrt(q) * cos((theta + TWO * PI) / THREE) - aa / THREE
+          if (root < lower_b .or. root > upper_b) then
+             root = -TWO * sqrt(q) * cos((theta - TWO * PI) / THREE) - aa / THREE
+             if (root < lower_b .or. root > upper_b) then
                 if (root < lower_b) then
-                   !write(*,*) 'Setting to lower bound'
                    root = lower_b
                 else
                    root = upper_b
-                endif
-
-                write(*,*) 'root = ', root
-                write(*,*) 'lower_b = ', lower_b
-                write(*,*) 'upper_b = ', upper_b
-                write(*,*) 'a = ', a
-                write(*,*) 'b = ', b
-                write(*,*) 'c = ', c
-                write(*,*) 'd = ', d
-                call warning('Acceptable cubic root not found')
-             endif
-          endif
-       endif
+                end if
+                call warning("Acceptable cubic root not found.")
+             end if
+          end if
+       end if
     else
-       if (R >= 0.0) then
-          dd = -(abs(R) + sqrt( abs(R*R-Q*Q*Q) ))**(1.0_8/3.0_8)
+       if (r >= ZERO) then
+          dd = -(abs(r) + sqrt(abs(r**2 - q**3)))**(ONE / THREE)
        else
-          dd = (abs(R) + sqrt( abs(R*R-Q*Q*Q) ))**(1.0_8/3.0_8)
-       endif
+          dd = (abs(r) + sqrt(abs(r**2 - q**3)))**(ONE / THREE)
+       end if
 
-       if (dd == 0.0) then
-          ee = 0.0
+       if (dd == ZERO) then
+          ee = ZERO
        else
-          ee = Q/dd
-       endif
+          ee = q / dd
+       end if
 
-       root = (dd + ee) - aa / 3.0_8
-       if (root < lower_b .OR. root > upper_b) then
-
+       root = (dd + ee) - aa / THREE
+       if (root < lower_b .or. root > upper_b) then
           if (root < lower_b) then
-             !write(*,*) 'Setting to lower bound'
              root = lower_b
           else
              root = upper_b
           endif
+          call warning("Acceptable cubic root not found.")
+       end if
+    end if
 
-          write(*,*) 'root = ', root
-          write(*,*) 'lower_b = ', lower_b
-          write(*,*) 'upper_b = ', upper_b
-          write(*,*) 'a = ', a
-          write(*,*) 'b = ', b
-          write(*,*) 'c = ', c
-          write(*,*) 'd = ', d
-          call warning('Acceptable cubic root not found')
-       endif
-
-    endif
   end subroutine get_cubic_root
 
 end module tracking
